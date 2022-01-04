@@ -102,6 +102,7 @@ task javadocJar(type: Jar) {
 // Javadoc
 
 javadoc {
+	failOnError false
 	exclude( "**/internal/*" )
 	exclude( "**/generated-src/**" )
 
