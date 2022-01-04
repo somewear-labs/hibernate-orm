@@ -17,8 +17,11 @@ publishing {
 
 	repositories {
 		maven {
-			name 'jboss-snapshots-repository'
-			url 'https://repository.jboss.org/nexus/content/repositories/snapshots'
+			url 'https://somewear-artifacts.appspot.com'
+			credentials {
+				username = somewearArtifactsAdminUsername
+				password = somewearArtifactsAdminPassword
+			}
 		}
 	}
 }
