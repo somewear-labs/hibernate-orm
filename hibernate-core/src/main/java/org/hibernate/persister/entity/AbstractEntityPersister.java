@@ -2287,7 +2287,7 @@ public abstract class AbstractEntityPersister
 			// We have to check the state for "mutable" properties as dirty tracking isn't aware of mutable types
 			final Type[] propertyTypes = entityMetamodel.getPropertyTypes();
 			final boolean[] propertyCheckability = entityMetamodel.getPropertyCheckability();
-			mutablePropertiesIndexes.stream().forEach( i -> {
+			for ( int i = mutablePropertiesIndexes.nextSetBit(0); i >= 0; i = mutablePropertiesIndexes.nextSetBit(i + 1) ) {
 				// This is kindly borrowed from org.hibernate.type.TypeHelper.findDirty
 				final boolean dirty = currentState[i] != LazyPropertyInitializer.UNFETCHED_PROPERTY &&
 						// Consider mutable properties as dirty if we don't have a previous state
@@ -2302,7 +2302,7 @@ public abstract class AbstractEntityPersister
 				if ( dirty ) {
 					fields.add( i );
 				}
-			} );
+			}
 		}
 
 		if ( attributeNames != null ) {
@@ -2941,7 +2941,7 @@ public abstract class AbstractEntityPersister
 
 		// append the SQL to return the generated identifier
 		if ( j == 0 && identityInsert && useInsertSelectIdentity() ) { //TODO: suck into Insert
-			result = getFactory().getDialect().getIdentityColumnSupport().appendIdentitySelectToInsert( result );
+			result = getFactory().getDialect().getIdentityColumnSupport().appendIdentitySelectToInsert( getKeyColumns( 0 )[0], result );
 		}
 
 		return result;
@@ -3382,7 +3382,7 @@ public abstract class AbstractEntityPersister
 					);
 				}
 			}
-			catch (SQLException | JDBCException e) {
+			catch (SQLException | RuntimeException e) {
 				if ( useBatch ) {
 					session.getJdbcCoordinator().abortBatch();
 				}
@@ -3583,7 +3583,7 @@ public abstract class AbstractEntityPersister
 				}
 
 			}
-			catch (SQLException e) {
+			catch (SQLException | RuntimeException e) {
 				if ( useBatch ) {
 					session.getJdbcCoordinator().abortBatch();
 				}
@@ -3709,11 +3709,11 @@ public abstract class AbstractEntityPersister
 				}
 
 			}
-			catch (SQLException sqle) {
+			catch (SQLException | RuntimeException e) {
 				if ( useBatch ) {
 					session.getJdbcCoordinator().abortBatch();
 				}
-				throw sqle;
+				throw e;
 			}
 			finally {
 				if ( !useBatch ) {
@@ -3806,10 +3806,28 @@ public abstract class AbstractEntityPersister
 		if ( entry == null && !isMutable() ) {
 			throw new IllegalStateException( "Updating immutable entity that is not in session yet!" );
 		}
-		if ( ( entityMetamodel.isDynamicUpdate() && dirtyFields != null ) ) {
+		if ( dirtyFields != null && entityMetamodel.isDynamicUpdate() ) {
 			// We need to generate the UPDATE SQL when dynamic-update="true"
 			propsToUpdate = getPropertiesToUpdate( dirtyFields, hasDirtyCollection );
 			// don't need to check laziness (dirty checking algorithm handles that)
+			updateStrings = new String[span];
+			for ( int j = 0; j < span; j++ ) {
+				updateStrings[j] = tableUpdateNeeded[j] ?
+						generateUpdateString( propsToUpdate, j, oldFields, j == 0 && rowId != null ) :
+						null;
+			}
+		}
+		else if ( dirtyFields != null && hasUninitializedLazyProperties( object ) && hasLazyDirtyFields( dirtyFields ) ) {
+			// We need to generate the UPDATE SQL when there are dirty lazy fields
+			propsToUpdate = getPropertiesToUpdate( dirtyFields, hasDirtyCollection );
+			// don't need to check laziness (dirty checking algorithm handles that)
+			final boolean[] propertyLaziness = getPropertyLaziness();
+			// we add also all the non lazy properties because dynamic update is false
+			for ( int i = 0; i < propertyLaziness.length; i++ ) {
+				if ( propertyLaziness[i] == false ) {
+					propsToUpdate[i] = true;
+				}
+			}
 			updateStrings = new String[span];
 			for ( int j = 0; j < span; j++ ) {
 				updateStrings[j] = tableUpdateNeeded[j] ?
@@ -3865,6 +3883,17 @@ public abstract class AbstractEntityPersister
 		}
 	}
 
+	private boolean hasLazyDirtyFields(int[] dirtyFields) {
+		final boolean[] propertyLaziness = getPropertyLaziness();
+		for ( int i = 0; i < dirtyFields.length; i++ ) {
+			if ( propertyLaziness[dirtyFields[i]] ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	@Override
 	public Serializable insert(Object[] fields, Object object, SharedSessionContractImplementor session)
 			throws HibernateException {
 		// apply any pre-insert in-memory value generation
